@@ -1,0 +1,277 @@
+---
+title: "thesis analysis"
+output:
+  html_document: default
+subtitle: 
+author: mandy osuji
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# install.packages("arm")
+# install.packages("blme")
+# install.packages("psycho")
+# install.packages("glmnet")
+# install.packages("car")
+# install.packages("multcomp")
+install.packages("ggthemes")
+library(arm)
+library(lme4)
+library(blme)
+library(ggplot2)
+library(stringr)
+library(psycho)
+library(glmnet)
+library(car)
+library("multcomp")
+library(ggthemes)
+```
+
+#### First, load the results data from output.csv and take a peek.
+
+```{r}
+# load csv file
+results <- read.csv(file = 'data/output.csv', header = TRUE)
+print(head(results), row.names = FALSE)
+```
+
+#### Added columns for the log reaction time and that value centered on each participant's mean, which will be helpful for later analysis and visualization.
+
+```{r}
+# add colums for log(rt) and mean-centered log(rt)
+results$rt_log <- log(results$rt)
+results$rt_log_centered <- results$rt_log - ave(results$rt_log, results$id, FUN = function(x) mean(x, na.rm = TRUE))
+print(results[1:10, c("n1", "n2", "rt", "rt_log", "rt_log_centered")], row.names = FALSE)
+#exclude practice trials
+results <- results[results$relation_type != "practice", ]
+```
+
+#### Response time by relation
+
+```{r}
+# box and whisker plots
+
+# centered log rt, split by relation type
+pdf("graphs/rt-by-relation.pdf", width=6, height=4)
+ggplot(results, aes(x = relation_type, y = rt_log_centered)) + 
+  geom_boxplot(size=.25, fill="thistle", staplewidth = 0.5, outlier.shape = 1, outlier.size = 1) + 
+  labs(x = "Relation type",
+       y = "Centered log response time") +
+  theme_bw() +
+  theme(panel.grid = element_blank(), axis.title.x = element_text(margin = margin(t = 10)))
+dev.off()
+
+# box and whisker plot for all participants
+pdf("graphs/rt-by-participant.pdf", width=6, height=4)
+ggplot(results, aes(x = factor(id), y = rt_log)) + 
+  geom_boxplot(size=.25, fill="lightgoldenrod", staplewidth = 0.5, outlier.shape = 1, outlier.size = 1) + 
+  labs(x = "Participant",
+       y = "Log response time") +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 6), panel.grid = element_blank(), axis.title.x = element_text(margin = margin(t = 10)))
+dev.off()
+
+# pdf("graphs/rt-by-relation-hist.pdf", width=6, height=4)
+# ggplot(results, aes(x = rt_log_centered, fill=relation_type)) + 
+#   geom_histogram(bins=50, position = "identity", alpha = 0.5) + 
+#   labs(x = "Centered log response time",
+#        y = "",
+#        fill="Relation type") +
+#   theme_bw() +
+#   theme(legend.position="bottom")
+# dev.off()
+```
+
+#### Scatter plots
+
+```{r}
+# log rt
+# ggplot(results, aes(x=n_sim, y=rt_log)) + 
+#   ggtitle("GloVe Similarity vs Log Response Time") +
+#   geom_jitter(size=1.2, alpha=0.5, color="darkorchid2")+ 
+#   geom_smooth(method=lm , formula = y ~ x, color="tomato", se=TRUE) +
+#   labs(x = "GloVe similarity", y = "Log response time")+
+#   theme_bw()
+
+# centered log rt
+# ggplot(results, aes(x=n_sim, y=rt_log_centered)) + 
+#   ggtitle("GloVe Similarity vs Centered Log Response Time") +
+#   geom_jitter(width = 0.01, height=0, size=1.2, alpha=0.5, color="cornflowerblue") + 
+#   geom_smooth(method=lm , formula = y ~ x, color="tomato", se=TRUE) +
+#   labs(x = "GloVe similarity", y = "Centered log response time")+
+#   theme_bw()
+
+# this one colors according to different relations
+# ggplot(results, aes(x=n_sim, y=rt_log, color=factor(relation_type))) + 
+#   ggtitle("GloVe Similarity vs Log Response Time") +
+#   geom_point(size=1.2) + 
+#   labs(x = "GloVe similarity", y = "Log response time", color="Relation type")+
+#   theme_bw()
+
+# scatterplot with x-axis glove similarity and y-axis rt
+# glove similarity versus centered log response time
+pdf("graphs/rt-glove-scatter.pdf", width=6, height=4)
+ggplot(results, aes(x=n_sim, y=rt_log_centered, color=factor(relation_type))) + 
+  geom_jitter(width = 0.005, height=0, size=1.2, alpha=0.5) +
+  labs(x = "GloVe similarity", y = "Centered log response time", color="Relation type") +
+  geom_smooth(method=lm , formula = y ~ x, color="darkmagenta", linewidth=.75, se=TRUE) +
+  theme_bw() +
+  theme(legend.position="bottom", axis.title.x = element_text(margin = margin(t = 20)))
+dev.off()
+```
+
+#### Some summary stats
+
+```{r}
+# summary stats of raw response times for each relation type
+summary(results$rt[results$relation_type == "hypernym"])
+summary(results$rt[results$relation_type == "meronym"])
+summary(results$rt[results$relation_type == "sister"])
+summary(results$rt[results$relation_type == "synonym"])
+```
+
+
+#### Linear Mixed-Effects Models
+
+```{r}
+# first we need to use sum-coding on relation_type since it is categorical
+relation_types <- c("sister", "hypernym", "meronym", "synonym")
+results$relation_type = factor(results$relation_type, levels=relation_types)
+contrasts(results$relation_type) <- contr.sum(4)
+# results
+```
+
+```{r}
+# now we can make our lme model to predict reaction time based on glove similarity, relation type, and response length, controlling for differences between individual participants
+relations.model <- lmer(rt ~ n_sim + relation_type + response_length + (1|id), data=results)
+summary(relations.model)
+```
+
+
+```{r}
+# in order to test for significance, we will do a likelihood ratio test between the full model and a null model without the factor of interest
+relations.model <- lmer(rt ~ n_sim + relation_type + (1|response_length) + (1|id), data=results, REML=FALSE)
+summary(relations.model)
+
+# here the factor of interest is glove similarity, and we do see significance
+relations.model.null <- lmer(rt ~ relation_type + (1|response_length) + (1|id), data=results, REML=FALSE)
+anova(relations.model.null, relations.model)
+
+# here the factor of interest is relation type, and we see no significance
+relations.model.null <- lmer(rt ~ n_sim + (1|response_length) + (1|id), data=results, REML=FALSE)
+anova(relations.model.null, relations.model)
+# if relation type was significant we would do the following to get more specifics on category influence:
+# relations_model_multcomp <- glht(relations.model.with.types, linfct=mcp(relation_type="Tukey"))
+# summary(relations_model_multcomp)
+
+# multicollinarity check, all VIF close to 1 indicating multicollinarity not a concern for interpretation
+vif(relations.model)
+```
+
+```{r}
+# # old initial models without relation_type
+# 
+# #relations.model <- glmer(rt ~ n_sim + response_length + (1|id), data=results)
+# relations.model <- lmer(rt ~ n_sim + response_length + (1|id), data=results)
+# summary(relations.model)
+# 
+# # likelihood ratio test, factor of interest is GloVe similarity
+# relations.null <- lmer(rt ~ response_length + (1|id), data=results, REML=FALSE)
+# relations.model <- lmer(rt ~ n_sim + response_length + (1|id), data=results, REML=FALSE)
+# # coef(relations.model)
+# anova(relations.null, relations.model)
+# 
+# # likelihood ratio test, factor of interest is response length
+# relations.null <- lmer(rt ~ (1|id), data=results, REML=FALSE)
+# relations.model <- lmer(rt ~ response_length + (1|id), data=results, REML=FALSE)
+# # coef(relations.model)
+# anova(relations.null, relations.model)
+```
+
+#### Visualizing cosine similarity between responses and base nouns?
+
+```{r}
+similarities <- read.csv(file = 'data/sims.csv', header = TRUE)
+similarities <- similarities[similarities$relation_type != "practice", ]
+print(head(similarities), row.names = FALSE)
+```
+
+```{r}
+# see how GloVe similarity is distributed among relation types
+pdf("graphs/glove-by-relation.pdf", width=6, height=4)
+ggplot(similarities, aes(x = relation_type, y = n_sim)) + 
+  geom_boxplot(size=.5, fill="lemonchiffon2") + 
+  labs(x = "Relation type",
+       y = "GloVe similarity between nouns in pair") +
+  theme_bw()
+dev.off()
+```
+
+```{r}
+# ggplot(subset(similarities, !is.na(avg_sim)), aes(x = r_n1_sim, y = r_n2_sim)) +
+#   geom_point(alpha = 0.5, color = "steelblue") +
+#   geom_abline(slope = 1, intercept = 0, linetype = "solid", color = "tomato") +
+#   labs(
+#     title = "similarity of response to n1 vs n2",
+#     x = "Similarity to n1",
+#     y = "Similarity to n2"
+#   ) + 
+#   xlim(0, 1) + ylim(0, 1) +
+#   theme_bw()
+```
+```{r}
+# with_lin <- read.csv(file = 'data/extra.csv', header = TRUE)
+# with_lin <- with_lin[with_lin$relation_type != "practice", ]
+# print(head(with_lin), row.names = FALSE)
+```
+
+
+```{r}
+# try model including lin similarity
+# relations.null <- lmer(rt ~ n_sim + response_length + (1|id), data=with_lin, REML=FALSE)
+# relations.model <- lmer(rt ~ n_sim + lin_similarity + response_length + (1|id), data=with_lin, REML=FALSE)
+# anova(relations.null, relations.model)
+```
+```{r}
+# GLOVE VISUAL (this takes awhile...)
+#install.packages("Rtsne")
+library(Rtsne)
+
+# read in data from file, format
+glove <- read.csv("data/glove.300d.txt", sep = " ", header = FALSE, quote = "")
+glove_subset <- glove[1:10000, ]
+word_labels <- glove_subset[, 1]
+vectors_subset <- as.matrix(glove_subset[, -1])
+rownames(vectors_subset) <- word_labels
+
+# do dimension reduction
+set.seed(42)
+tsne_out <- Rtsne(vectors_subset, dims = 2, perplexity = 30)
+
+# words to emphasize
+target_words <- c("boat", "ocean", "trip", "dock", 
+                  "thesis", "learning", "work", "student",
+                  "dress", "style", "scarf", "necklace")
+
+# create data frame for plotting
+plot_data <- data.frame(
+  x = tsne_out$Y[, 1],
+  y = tsne_out$Y[, 2],
+  word = word_labels
+)
+plot_data$label <- ifelse(plot_data$word %in% target_words, as.character(plot_data$word), "")
+
+# generate the scatter plot
+pdf("graphs/glove-cloud.pdf", width=6, height=4)
+ggplot(plot_data, aes(x, y)) +
+  geom_point(alpha = 0.2, color = "grey") + # Faded background points
+  geom_text(aes(label = label), color = "blue4", fontface = "bold", size = 3) + 
+  theme_minimal() +
+  labs(x = "", y="") +
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank(), panel.grid = element_blank())
+dev.off()
+```
+
